@@ -10,73 +10,144 @@
 #                                                                              #
 # **************************************************************************** #
 
-import argparse
 import os
-from urllib.parse import urlparse
-
+import sys
+import argparse
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
+from pathlib import Path
 
 
-# print("Status code: {}\n".format(r.status_code))
-# print("Header: {}\n".format(r.headers))
-# print("Encoding: {}\n".format(r.encoding))
-# print("Text: {}\n".format(r.text))
-# print("Json: {}\n".format(r.json))
+def get_arguments():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("url", help="the URL to download")
+    parser.add_argument("-l", "--length", type=int, default=5, help="the recursion depth")
+    parser.add_argument("-r", "--recursive", action="store_true", help="whether to recursively download links")
+    parser.add_argument("-p", "--path", default="./data", help="the path to save the file")
+    args = parser.parse_args()
 
-def ft_get_all_links(domain) -> list:
-    r = requests.get(domain)
-    page_source = r.text
-    soup = BeautifulSoup(page_source, 'html.parser')
+    return args
 
-    full_domain_lst = []
 
-    for link in soup.find_all('a'):
-        links = link.get('href')
-        if (urlparse(domain).netloc in links) and not(urlparse(domain).netloc in full_domain_lst):
-            full_domain_lst.append(links)
-        else:
-            continue
+def get_html(url):
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            return response.text
+    except requests.exceptions.RequestException as e:
+        print(f"Error: {e}")
+    return None
 
-    full_domain_lst = list(dict.fromkeys(full_domain_lst)) 
-    return(full_domain_lst)
 
-def ft_get_all_images(url_lst, path):
-    i = 0
-    for url in url_lst:
-        r = requests.get(url)
-        page_source = r.text
-        soup = BeautifulSoup(page_source, 'html.parser')
-        for image in soup.find_all('img'):
-            try:
-                img_url = image.get('src')
-                filename = img_url.rsplit('/', 1)[1]
-                r = requests.get(img_url, stream=True)
-                with open(path + filename, 'wb') as file:
-                    for chunk in r.iter_content(chunk_size=1024):
-                        file.write(chunk)
-            except:
-                continue
+def find_images(html, base_url, domain):
+    soup = BeautifulSoup(html, 'html.parser')
+    img_tags = soup.find_all('img')
+
+    images = []
+    for img_tag in img_tags:
+        src = img_tag.get('src')
+        if src:
+            image_url = urljoin(base_url, src)
+            if urlparse(image_url).netloc == domain:
+                images.append(image_url)
+
+    print(f"Found {len(images)} images: {images}")  # Add this line for debugging
+    return images
+
+
+
+def get_links(html, base_url):
+    soup = BeautifulSoup(html, 'html.parser')
+    link_tags = soup.find_all('a')
+
+    links = []
+    for link_tag in link_tags:
+        href = link_tag.get('href')
+        if href:
+            link_url = urljoin(base_url, href)
+            links.append(link_url)
+    return links
+
+
+def download_images(images, folder_path):
+    print(f"Downloading {len(images)} images: {images}")  # Add this line for debugging
+    downloaded_images = []
+    for image_url in images:
+        try:
+            response = requests.get(image_url, stream=True)
+            if response.status_code == 200:
+                file_name = image_url.split("/")[-1]
+                file_path = os.path.join(folder_path, file_name)
+                with open(file_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                downloaded_images.append(image_url)
+                print(f"Downloaded image: {image_url}")  # Add this line for debugging
+            else:
+                print(f"Error downloading image: {image_url}, status_code: {response.status_code}")
+        except requests.exceptions.RequestException as e:
+            print(f"Error downloading image: {image_url}, error: {e}")
+    return downloaded_images
+
+
+
+def save_downloaded_urls(downloaded_images, folder_path):
+    file_path = os.path.join(folder_path, "downloaded_images.txt")
+    with open(file_path, "w") as f:
+        for url in downloaded_images:
+            f.write(f"{url}\n")
+
+
+def main(args):
+    base_url = args.url
+    parsed_url = urlparse(base_url)
+    domain = parsed_url.netloc
+    folder_path = args.path
+
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+    else:
+        for file in os.scandir(folder_path):
+            if file.is_file():
+                os.unlink(file.path)
+
+    html = get_html(base_url)
+    if html is None:
+        sys.exit(f"Error: Unable to fetch URL: {base_url}")
+
+    print(f"HTML: {html}")
+    images = find_images(html, base_url, domain)
+    print(f"Found {len(images)} images on the main page: {images}")  # Add this line for debugging
+    downloaded_images = download_images(images, folder_path)
+    print(f"Downloaded {len(downloaded_images)} images from the main page")
+
+    if args.recursive:
+        visited = {base_url}
+        to_visit = get_links(html, base_url)
+
+        for _ in range(args.length):
+            next_links = []
+            for link in to_visit:
+                if link not in visited:
+                    visited.add(link)
+                    if urlparse(link).netloc == domain:
+                        html = get_html(link)
+                        if html:
+                            images = find_images(html, link, domain)
+                            print(f"Found {len(images)} images on {link}")
+                            new_downloaded_images = download_images(images, folder_path)
+                            print(f"Downloaded {len(new_downloaded_images)} images from {link}")
+                            downloaded_images.extend(new_downloaded_images)
+                            next_links.extend(get_links(html, link))
+            to_visit = next_links
+        save_downloaded_urls(downloaded_images, folder_path)
+        print(f"Saved {len(downloaded_images)} image URLs in downloaded_images.txt")
+
+    else:
+        save_downloaded_urls(downloaded_images, folder_path)
+        print(f"Saved {len(downloaded_images)} image URLs in downloaded_images.txt")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Webscrap an URL and download images')
-    parser.add_argument("url", 
-                        help='Specify URL to scrap')
-    parser.add_argument("-r", "--recursive", dest='r',
-                        help='Recursivly download images', action='store_true')
-    parser.add_argument("-l", "--length", metavar='[N]', dest='l',
-                        help='Depth you want to scrap', default=5)
-    parser.add_argument("-p", "--path", metavar='[PATH]', dest="p", 
-                        help='Specify were downloaded images should be saved', default='./data/')
-
-    args = parser.parse_args()
-    print(args.r)
-    print(args.l)
-    try:
-        os.mkdir(args.p)
-    except FileExistsError as fe:
-        print("WARN:\n\tFolder already exist!\n\t{}".format(fe))
-    links = ft_get_all_links(args.url)
-    for item in links:
-        print(item)
-        ft_get_all_images(item, "./data/")
+    args = get_arguments()
+    main(args)
