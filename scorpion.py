@@ -6,7 +6,7 @@
 #    By: rzamolo- <rzamolo-@student.42.fr>          +#+  +:+       +#+         #
 #                                                 +#+#+#+#+#+   +#+            #
 #    Created: 2023/05/20 15:56:50 by rzamolo-          #+#    #+#              #
-#    Updated: 2023/05/22 21:06:41 by rzamolo-         ###   ########.fr        #
+#    Updated: 2023/05/25 15:39:04 by rzamolo-         ###   ########.fr        #
 #                                                                              #
 # **************************************************************************** #
 
@@ -27,7 +27,7 @@ def read_metadata(file):
                     else:
                         print("{}:\t{:^50}".format(tag, value))  # Print formatted tag and value
         except Exception as e:  # Handle exceptions
-            print(f">> ERROR: Reading file tag - {str(e)}")  # Print error message
+            print(">> ERROR: Reading file tag - {}".format(str(e)))  # Print error message
 
 def remove_metadata(file, tags="all"):
     with ExifTool() as file_data:  # Create an instance of ExifTool and ensure proper cleanup
